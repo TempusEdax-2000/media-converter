@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro AI Media Suite</title>
+    <script src="coi-serviceworker.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+    <style>
+        :root { --accent: #00e676; --bg: #121212; --card: #1e1e1e; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: #fff; margin: 0; padding: 20px; display: flex; justify-content: center; }
+        .container { background: var(--card); padding: 25px; border-radius: 15px; width: 100%; max-width: 500px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h2 { color: var(--accent); margin-top: 0; font-size: 1.5rem; }
+        .section { margin-bottom: 20px; text-align: left; background: #252525; padding: 15px; border-radius: 10px; }
+        label { display: block; font-size: 0.8rem; color: #aaa; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }
+        select, input, button { width: 100%; padding: 12px; border-radius: 8px; border: none; background: #333; color: white; font-size: 1rem; margin-top: 5px; box-sizing: border-box; }
+        input[type="range"] { padding: 0; accent-color: var(--accent); }
+        button { background: var(--accent); color: #000; font-weight: bold; cursor: pointer; margin-top: 20px; transition: 0.3s; }
+        button:disabled { background: #444; color: #888; }
+        #log { font-family: monospace; font-size: 11px; background: #000; padding: 10px; border-radius: 5px; height: 120px; overflow-y: auto; color: #00ff00; margin-top: 15px; border: 1px solid #333; }
+        .progress-container { height: 6px; background: #333; border-radius: 3px; margin-top: 10px; display: none; }
+        #progress { height: 100%; background: var(--accent); width: 0%; transition: width 0.2s; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Advanced Converter</h2>
+    
+    <div class="section">
+        <label>1. Select Source File</label>
+        <input type="file" id="fileIn" accept="audio/*,video/*,image/*">
+    </div>
+
+    <div class="section">
+        <label>2. Target Format</label>
+        <select id="targetFormat">
+            <optgroup label="Video">
+                <option value="mp4">MP4 (H.264 High Profile)</option>
+                <option value="webm">WebM (VP9 Engine)</option>
+                <option value="mov">MOV (QuickTime)</option>
+                <option value="mpg">MPG (MPEG-2)</option>
+                <option value="gif">Animated GIF</option>
+            </optgroup>
+            <optgroup label="Audio">
+                <option value="mp3">MP3 (Lame Enc)</option>
+                <option value="aac">AAC (Advanced Audio)</option>
+                <option value="m4a">M4A (Apple Lossless style)</option>
+                <option value="wav">WAV (Uncompressed)</option>
+                <option value="ogg">OGG (Vorbis)</option>
+            </optgroup>
+            <optgroup label="Image">
+                <option value="webp">WebP (Optimized)</option>
+            </optgroup>
+        </select>
+    </div>
+
+    <div class="section">
+        <label>3. Quality Intelligence (CRF/Bitrate)</label>
+        <input type="range" id="quality" min="1" max="51" value="23" reverse>
+        <div style="display:flex; justify-content:space-between; font-size:10px; color:#888;">
+            <span>High Quality (Large File)</span>
+            <span>Fast/Small</span>
+        </div>
+    </div>
+
+    <button id="goBtn">Initialize & Convert</button>
+
+    <div class="progress-container" id="pCont">
+        <div id="progress"></div>
+    </div>
+
+    <div id="log">Ready to process...</div>
+</div>
+
+<script>
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    const ffmpeg = createFFmpeg({ log: true });
+
+    const logBox = document.getElementById('log');
+    const writeLog = (msg) => {
+        logBox.innerHTML += `<br>> ${msg}`;
+        logBox.scrollTop = logBox.scrollHeight;
+    };
+
+    document.getElementById('goBtn').onclick = async () => {
+        const file = document.getElementById('fileIn').files[0];
+        const fmt = document.getElementById('targetFormat').value;
+        const qual = document.getElementById('quality').value;
+        
+        if (!file) return alert("Please select a file.");
+
+        document.getElementById('goBtn').disabled = true;
+        document.getElementById('pCont').style.display = 'block';
+
+        if (!ffmpeg.isLoaded()) {
+            writeLog("Loading FFmpeg AI libraries...");
+            await ffmpeg.load();
+        }
+
+        writeLog(`Ingesting ${file.name}...`);
+        ffmpeg.FS('writeFile', 'input', await fetchFile(file));
+
+        // Intelligent Command Builder
+        let cmd = ['-i', 'input'];
+
+        if (['mp4', 'mov', 'webm'].includes(fmt)) {
+            writeLog("Applying Video optimization...");
+            cmd.push('-preset', 'veryfast', '-crf', qual, '-c:a', 'aac', '-b:a', '192k');
+        } else if (fmt === 'mp3') {
+            cmd.push('-q:a', '2'); // High Quality VBR
+        } else if (fmt === 'gif') {
+            cmd.push('-vf', 'fps=12,scale=480:-1:flags=lanczos');
+        } else if (fmt === 'webp') {
+            cmd.push('-lossless', '0', '-q:60');
+        }
+
+        const outputName = `converted_${Date.now()}.${fmt}`;
+        cmd.push(outputName);
+
+        writeLog("Executing conversion... this may take a moment.");
+        
+        ffmpeg.setProgress(({ ratio }) => {
+            document.getElementById('progress').style.width = (ratio * 100) + '%';
+        });
+
+        try {
+            await ffmpeg.run(...cmd);
+            const data = ffmpeg.FS('readFile', outputName);
+            const url = URL.createObjectURL(new Blob([data.buffer]));
+            
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = outputName;
+            link.click();
+            writeLog("Success! File downloaded.");
+        } catch (e) {
+            writeLog("Error: " + e.message);
+        }
+
+        document.getElementById('goBtn').disabled = false;
+    };
+</script>
+
+</body>
+</html>
